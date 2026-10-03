@@ -38,7 +38,9 @@ Every added package must be reviewed before use:
 4. Does it include analytics, ads, telemetry, or crash reporting?
 5. Can the feature be implemented without the dependency?
 
-For MVP, prefer no runtime dependencies beyond Flutter itself.
+Current runtime dependencies beyond Flutter:
+
+- `audioplayers`: used only to loop the local `assets/audio/background.mp3` file. Must be checked in the merged Android manifest before APK installation.
 
 ## Pre-APK audit checklist
 
