@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import 'core/game_core.dart';
 import 'core/game_session.dart';
@@ -38,13 +39,17 @@ class WahaHomePage extends StatefulWidget {
 class _WahaHomePageState extends State<WahaHomePage> {
   GameSession? _session;
   bool _isPlaying = false;
+  bool _inputLocked = false;
   String? _message;
+  Set<BoardPosition> _vanishingPositions = {};
 
   void _startGame() {
     setState(() {
       _session ??= GameSession.newGame();
       _isPlaying = true;
       _message = null;
+      _vanishingPositions = {};
+      _inputLocked = false;
     });
   }
 
@@ -52,6 +57,8 @@ class _WahaHomePageState extends State<WahaHomePage> {
     setState(() {
       _isPlaying = false;
       _message = null;
+      _vanishingPositions = {};
+      _inputLocked = false;
     });
   }
 
@@ -64,6 +71,8 @@ class _WahaHomePageState extends State<WahaHomePage> {
     setState(() {
       session.startNextLevel();
       _message = null;
+      _vanishingPositions = {};
+      _inputLocked = false;
     });
   }
 
@@ -78,22 +87,64 @@ class _WahaHomePageState extends State<WahaHomePage> {
     });
   }
 
-  void _handleSwipe(BoardPosition position, Direction direction) {
+  Future<void> _handleSwipe(BoardPosition position, Direction direction) async {
     final session = _session;
-    if (session == null || session.isLevelComplete) {
+    if (session == null || session.isLevelComplete || _inputLocked) {
       return;
     }
 
+    final before = session.board.cells;
+    MoveResult result;
     setState(() {
-      final result = session.swipe(position, direction);
+      _inputLocked = true;
+      _vanishingPositions = {};
+      result = session.swipe(position, direction);
       if (!result.accepted) {
         _message = 'Ход не собрал 3 в ряд';
+        _inputLocked = false;
       } else if (result.reshuffled) {
         _message = 'Нет доступных ходов. Перемешиваем!';
       } else {
         _message = null;
       }
     });
+
+    if (!result.accepted) {
+      return;
+    }
+
+    if (session.soundEnabled) {
+      await SystemSound.play(SystemSoundType.click);
+    }
+
+    final changed = _changedPositions(before, session.board.cells);
+    if (changed.isNotEmpty && mounted) {
+      setState(() {
+        _vanishingPositions = changed;
+      });
+      await Future<void>.delayed(const Duration(milliseconds: 190));
+    }
+
+    if (!mounted) {
+      return;
+    }
+
+    setState(() {
+      _vanishingPositions = {};
+      _inputLocked = false;
+    });
+  }
+
+  Set<BoardPosition> _changedPositions(List<List<int>> before, List<List<int>> after) {
+    final changed = <BoardPosition>{};
+    for (var row = 0; row < boardSize; row++) {
+      for (var col = 0; col < boardSize; col++) {
+        if (before[row][col] != after[row][col]) {
+          changed.add(BoardPosition(row, col));
+        }
+      }
+    }
+    return changed;
   }
 
   @override
@@ -103,6 +154,8 @@ class _WahaHomePageState extends State<WahaHomePage> {
       return GamePage(
         session: session,
         message: _message,
+        inputLocked: _inputLocked,
+        vanishingPositions: _vanishingPositions,
         onHome: _goHome,
         onNextLevel: _nextLevel,
         onToggleSound: _toggleSound,
@@ -183,6 +236,8 @@ class GamePage extends StatelessWidget {
   const GamePage({
     required this.session,
     required this.message,
+    required this.inputLocked,
+    required this.vanishingPositions,
     required this.onHome,
     required this.onNextLevel,
     required this.onToggleSound,
@@ -192,6 +247,8 @@ class GamePage extends StatelessWidget {
 
   final GameSession session;
   final String? message;
+  final bool inputLocked;
+  final Set<BoardPosition> vanishingPositions;
   final VoidCallback onHome;
   final VoidCallback onNextLevel;
   final VoidCallback onToggleSound;
@@ -242,7 +299,8 @@ class GamePage extends StatelessWidget {
                       height: boardExtent,
                       child: GameBoardView(
                         board: session.board,
-                        enabled: !session.isLevelComplete,
+                        enabled: !session.isLevelComplete && !inputLocked,
+                        vanishingPositions: vanishingPositions,
                         onSwipe: onSwipe,
                       ),
                     ),
@@ -299,12 +357,14 @@ class GameBoardView extends StatelessWidget {
   const GameBoardView({
     required this.board,
     required this.enabled,
+    required this.vanishingPositions,
     required this.onSwipe,
     super.key,
   });
 
   final GameBoard board;
   final bool enabled;
+  final Set<BoardPosition> vanishingPositions;
   final void Function(BoardPosition position, Direction direction) onSwipe;
 
   @override
@@ -332,6 +392,7 @@ class GameBoardView extends StatelessWidget {
           return GemTile(
             gem: cells[row][col],
             enabled: enabled,
+            disappearing: vanishingPositions.contains(position),
             onSwipe: (direction) => onSwipe(position, direction),
           );
         },
@@ -344,12 +405,14 @@ class GemTile extends StatefulWidget {
   const GemTile({
     required this.gem,
     required this.enabled,
+    required this.disappearing,
     required this.onSwipe,
     super.key,
   });
 
   final int gem;
   final bool enabled;
+  final bool disappearing;
   final void Function(Direction direction) onSwipe;
 
   @override
@@ -396,46 +459,55 @@ class _GemTileState extends State<GemTile> {
       onPanUpdate: widget.enabled ? _updateDrag : null,
       onPanEnd: widget.enabled ? (_) => _resetDrag() : null,
       onPanCancel: widget.enabled ? _resetDrag : null,
-      child: AnimatedSwitcher(
-        duration: const Duration(milliseconds: 220),
-        switchInCurve: Curves.easeOutBack,
-        switchOutCurve: Curves.easeIn,
-        transitionBuilder: (child, animation) {
-          return FadeTransition(
-            opacity: animation,
-            child: ScaleTransition(
-              scale: Tween<double>(begin: 0.74, end: 1).animate(animation),
-              child: child,
-            ),
-          );
-        },
-        child: AnimatedContainer(
-          key: ValueKey(widget.gem),
+      child: AnimatedScale(
+        duration: const Duration(milliseconds: 180),
+        curve: Curves.easeInOut,
+        scale: widget.disappearing ? 0.35 : 1,
+        child: AnimatedOpacity(
           duration: const Duration(milliseconds: 180),
-          alignment: Alignment.center,
-          decoration: BoxDecoration(
-            color: style.color,
-            borderRadius: BorderRadius.circular(7),
-            border: Border.all(color: Colors.white.withOpacity(0.24)),
-            boxShadow: [
-              BoxShadow(
-                color: style.color.withOpacity(0.28),
-                blurRadius: 10,
-                offset: const Offset(0, 3),
+          opacity: widget.disappearing ? 0.12 : 1,
+          child: AnimatedSwitcher(
+            duration: const Duration(milliseconds: 220),
+            switchInCurve: Curves.easeOutBack,
+            switchOutCurve: Curves.easeIn,
+            transitionBuilder: (child, animation) {
+              return FadeTransition(
+                opacity: animation,
+                child: ScaleTransition(
+                  scale: Tween<double>(begin: 0.74, end: 1).animate(animation),
+                  child: child,
+                ),
+              );
+            },
+            child: AnimatedContainer(
+              key: ValueKey(widget.gem),
+              duration: const Duration(milliseconds: 180),
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                color: style.color,
+                borderRadius: BorderRadius.circular(7),
+                border: Border.all(color: Colors.white.withOpacity(0.24)),
+                boxShadow: [
+                  BoxShadow(
+                    color: style.color.withOpacity(0.28),
+                    blurRadius: 10,
+                    offset: const Offset(0, 3),
+                  ),
+                ],
               ),
-            ],
-          ),
-          child: FittedBox(
-            fit: BoxFit.scaleDown,
-            child: Padding(
-              padding: const EdgeInsets.all(6),
-              child: Text(
-                style.symbol,
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 24,
-                  fontWeight: FontWeight.w800,
-                  letterSpacing: 0,
+              child: FittedBox(
+                fit: BoxFit.scaleDown,
+                child: Padding(
+                  padding: const EdgeInsets.all(6),
+                  child: Text(
+                    style.symbol,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 24,
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: 0,
+                    ),
+                  ),
                 ),
               ),
             ),
