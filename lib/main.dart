@@ -94,7 +94,7 @@ class _WahaHomePageState extends State<WahaHomePage> {
     }
 
     final before = session.board.cells;
-    MoveResult result;
+    late final MoveResult result;
     setState(() {
       _inputLocked = true;
       _vanishingPositions = {};
