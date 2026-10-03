@@ -39,10 +39,11 @@ void main() {
 
   group('Swaps', () {
     test('rejects a swap that does not create a match', () {
-      final board = GameBoard.fromCells(_stableBoard());
+      final board = GameBoard.newPlayable(random: Random(4));
       final before = board.cells;
+      final move = _findMove(board, shouldCreateMatch: false);
 
-      final result = board.swipe(const BoardPosition(0, 0), Direction.right);
+      final result = board.swipe(move.from, move.direction);
 
       expect(result.accepted, isFalse);
       expect(result.scoreDelta, 0);
@@ -50,18 +51,10 @@ void main() {
     });
 
     test('accepts a swap that creates a match and returns score', () {
-      final board = GameBoard.fromCells([
-        [0, 1, 0, 2, 3, 4, 5, 1],
-        [2, 0, 1, 3, 4, 5, 0, 2],
-        [3, 4, 0, 5, 1, 2, 3, 4],
-        [4, 5, 2, 0, 2, 3, 4, 5],
-        [5, 2, 3, 4, 0, 1, 2, 3],
-        [1, 3, 4, 5, 2, 0, 1, 2],
-        [2, 4, 5, 1, 3, 4, 5, 0],
-        [3, 5, 1, 2, 4, 5, 0, 1],
-      ], random: Random(3));
+      final board = GameBoard.newPlayable(random: Random(5));
+      final move = _findMove(board, shouldCreateMatch: true);
 
-      final result = board.swipe(const BoardPosition(0, 1), Direction.right);
+      final result = board.swipe(move.from, move.direction);
 
       expect(result.accepted, isTrue);
       expect(result.scoreDelta, greaterThanOrEqualTo(3));
@@ -71,17 +64,69 @@ void main() {
   });
 }
 
-List<List<int>> _stableBoard() {
-  return [
-    [0, 1, 2, 3, 4, 5, 0, 1],
-    [2, 3, 4, 5, 0, 1, 2, 3],
-    [4, 5, 0, 1, 2, 3, 4, 5],
-    [1, 2, 3, 4, 5, 0, 1, 2],
-    [3, 4, 5, 0, 1, 2, 3, 4],
-    [5, 0, 1, 2, 3, 4, 5, 0],
-    [0, 1, 2, 3, 4, 5, 0, 1],
-    [2, 3, 4, 5, 0, 1, 2, 3],
-  ];
+_TestMove _findMove(GameBoard board, {required bool shouldCreateMatch}) {
+  final cells = board.cells;
+  for (var row = 0; row < boardSize; row++) {
+    for (var col = 0; col < boardSize; col++) {
+      final from = BoardPosition(row, col);
+      for (final direction in Direction.values) {
+        final to = from.neighbor(direction);
+        if (!to.isInside) {
+          continue;
+        }
+
+        final copy = [for (final sourceRow in cells) List<int>.of(sourceRow)];
+        final temp = copy[from.row][from.col];
+        copy[from.row][from.col] = copy[to.row][to.col];
+        copy[to.row][to.col] = temp;
+
+        if (_hasMatch(copy) == shouldCreateMatch) {
+          return _TestMove(from, direction);
+        }
+      }
+    }
+  }
+
+  throw StateError('Unable to find requested test move.');
+}
+
+bool _hasMatch(List<List<int>> cells) {
+  for (var row = 0; row < boardSize; row++) {
+    var run = 1;
+    for (var col = 1; col < boardSize; col++) {
+      if (cells[row][col] == cells[row][col - 1]) {
+        run++;
+        if (run >= 3) {
+          return true;
+        }
+      } else {
+        run = 1;
+      }
+    }
+  }
+
+  for (var col = 0; col < boardSize; col++) {
+    var run = 1;
+    for (var row = 1; row < boardSize; row++) {
+      if (cells[row][col] == cells[row - 1][col]) {
+        run++;
+        if (run >= 3) {
+          return true;
+        }
+      } else {
+        run = 1;
+      }
+    }
+  }
+
+  return false;
+}
+
+class _TestMove {
+  const _TestMove(this.from, this.direction);
+
+  final BoardPosition from;
+  final Direction direction;
 }
 
 List<List<int>> _boardWithCrossMatch() {
