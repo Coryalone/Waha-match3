@@ -1,3 +1,6 @@
+import 'dart:async';
+
+import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -37,6 +40,8 @@ class WahaHomePage extends StatefulWidget {
 }
 
 class _WahaHomePageState extends State<WahaHomePage> {
+  final AudioPlayer _musicPlayer = AudioPlayer();
+
   GameSession? _session;
   bool _isPlaying = false;
   bool _inputLocked = false;
@@ -51,6 +56,7 @@ class _WahaHomePageState extends State<WahaHomePage> {
       _vanishingPositions = {};
       _inputLocked = false;
     });
+    unawaited(_syncBackgroundMusic());
   }
 
   void _goHome() {
@@ -60,6 +66,7 @@ class _WahaHomePageState extends State<WahaHomePage> {
       _vanishingPositions = {};
       _inputLocked = false;
     });
+    unawaited(_syncBackgroundMusic());
   }
 
   void _nextLevel() {
@@ -85,6 +92,18 @@ class _WahaHomePageState extends State<WahaHomePage> {
     setState(() {
       session.setSoundEnabled(!session.soundEnabled);
     });
+    unawaited(_syncBackgroundMusic());
+  }
+
+  Future<void> _syncBackgroundMusic() async {
+    final session = _session;
+    if (_isPlaying && session != null && session.soundEnabled) {
+      await _musicPlayer.setReleaseMode(ReleaseMode.loop);
+      await _musicPlayer.setVolume(0.35);
+      await _musicPlayer.play(AssetSource('audio/background.mp3'));
+    } else {
+      await _musicPlayer.stop();
+    }
   }
 
   Future<void> _handleSwipe(BoardPosition position, Direction direction) async {
@@ -145,6 +164,12 @@ class _WahaHomePageState extends State<WahaHomePage> {
       }
     }
     return changed;
+  }
+
+  @override
+  void dispose() {
+    unawaited(_musicPlayer.dispose());
+    super.dispose();
   }
 
   @override
