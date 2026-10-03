@@ -247,13 +247,17 @@ class GamePage extends StatelessWidget {
                       ),
                     ),
                     const SizedBox(height: 14),
-                    Text(
-                      message ?? 'Свайпайте кристаллы, чтобы собрать 3 в ряд',
-                      textAlign: TextAlign.center,
-                      style: TextStyle(
-                        color: message == null
-                            ? Theme.of(context).colorScheme.onSurfaceVariant
-                            : Theme.of(context).colorScheme.primary,
+                    AnimatedSwitcher(
+                      duration: const Duration(milliseconds: 180),
+                      child: Text(
+                        message ?? 'Свайпайте кристаллы, чтобы собрать 3 в ряд',
+                        key: ValueKey(message ?? 'hint'),
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          color: message == null
+                              ? Theme.of(context).colorScheme.onSurfaceVariant
+                              : Theme.of(context).colorScheme.primary,
+                        ),
                       ),
                     ),
                     if (session.isLevelComplete) ...[
@@ -336,7 +340,7 @@ class GameBoardView extends StatelessWidget {
   }
 }
 
-class GemTile extends StatelessWidget {
+class GemTile extends StatefulWidget {
   const GemTile({
     required this.gem,
     required this.enabled,
@@ -349,48 +353,90 @@ class GemTile extends StatelessWidget {
   final void Function(Direction direction) onSwipe;
 
   @override
+  State<GemTile> createState() => _GemTileState();
+}
+
+class _GemTileState extends State<GemTile> {
+  static const double _dragThreshold = 18;
+
+  Offset _dragOffset = Offset.zero;
+  bool _sentSwipe = false;
+
+  void _resetDrag() {
+    _dragOffset = Offset.zero;
+    _sentSwipe = false;
+  }
+
+  void _updateDrag(DragUpdateDetails details) {
+    if (!widget.enabled || _sentSwipe) {
+      return;
+    }
+
+    _dragOffset += details.delta;
+    final dx = _dragOffset.dx;
+    final dy = _dragOffset.dy;
+    if (dx.abs() < _dragThreshold && dy.abs() < _dragThreshold) {
+      return;
+    }
+
+    _sentSwipe = true;
+    if (dx.abs() > dy.abs()) {
+      widget.onSwipe(dx > 0 ? Direction.right : Direction.left);
+    } else {
+      widget.onSwipe(dy > 0 ? Direction.down : Direction.up);
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final style = _gemStyles[gem % _gemStyles.length];
+    final style = _gemStyles[widget.gem % _gemStyles.length];
     return GestureDetector(
-      onPanEnd: enabled
-          ? (details) {
-              final velocity = details.velocity.pixelsPerSecond;
-              if (velocity.distance < 120) {
-                return;
-              }
-              if (velocity.dx.abs() > velocity.dy.abs()) {
-                onSwipe(velocity.dx > 0 ? Direction.right : Direction.left);
-              } else {
-                onSwipe(velocity.dy > 0 ? Direction.down : Direction.up);
-              }
-            }
-          : null,
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 160),
-        alignment: Alignment.center,
-        decoration: BoxDecoration(
-          color: style.color,
-          borderRadius: BorderRadius.circular(7),
-          border: Border.all(color: Colors.white.withOpacity(0.24)),
-          boxShadow: [
-            BoxShadow(
-              color: style.color.withOpacity(0.28),
-              blurRadius: 10,
-              offset: const Offset(0, 3),
+      behavior: HitTestBehavior.opaque,
+      onPanStart: widget.enabled ? (_) => _resetDrag() : null,
+      onPanUpdate: widget.enabled ? _updateDrag : null,
+      onPanEnd: widget.enabled ? (_) => _resetDrag() : null,
+      onPanCancel: widget.enabled ? _resetDrag : null,
+      child: AnimatedSwitcher(
+        duration: const Duration(milliseconds: 220),
+        switchInCurve: Curves.easeOutBack,
+        switchOutCurve: Curves.easeIn,
+        transitionBuilder: (child, animation) {
+          return FadeTransition(
+            opacity: animation,
+            child: ScaleTransition(
+              scale: Tween<double>(begin: 0.74, end: 1).animate(animation),
+              child: child,
             ),
-          ],
-        ),
-        child: FittedBox(
-          fit: BoxFit.scaleDown,
-          child: Padding(
-            padding: const EdgeInsets.all(6),
-            child: Text(
-              style.symbol,
-              style: const TextStyle(
-                color: Colors.white,
-                fontSize: 24,
-                fontWeight: FontWeight.w800,
-                letterSpacing: 0,
+          );
+        },
+        child: AnimatedContainer(
+          key: ValueKey(widget.gem),
+          duration: const Duration(milliseconds: 180),
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            color: style.color,
+            borderRadius: BorderRadius.circular(7),
+            border: Border.all(color: Colors.white.withOpacity(0.24)),
+            boxShadow: [
+              BoxShadow(
+                color: style.color.withOpacity(0.28),
+                blurRadius: 10,
+                offset: const Offset(0, 3),
+              ),
+            ],
+          ),
+          child: FittedBox(
+            fit: BoxFit.scaleDown,
+            child: Padding(
+              padding: const EdgeInsets.all(6),
+              child: Text(
+                style.symbol,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 24,
+                  fontWeight: FontWeight.w800,
+                  letterSpacing: 0,
+                ),
               ),
             ),
           ),
