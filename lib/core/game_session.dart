@@ -40,7 +40,7 @@ class GameSession {
 
     return GameSession._(
       level: level,
-      score: score.clamp(0, levelTargetScore),
+      score: _clampScore(score),
       board: board,
       soundEnabled: soundEnabled,
     );
@@ -67,7 +67,7 @@ class GameSession {
 
     final result = board.swipe(from, direction);
     if (result.accepted) {
-      score = (score + result.scoreDelta).clamp(0, levelTargetScore);
+      score = _clampScore(score + result.scoreDelta);
     }
     return result;
   }
@@ -85,5 +85,9 @@ class GameSession {
 
   void setSoundEnabled(bool enabled) {
     soundEnabled = enabled;
+  }
+
+  static int _clampScore(int value) {
+    return value.clamp(0, levelTargetScore).toInt();
   }
 }
