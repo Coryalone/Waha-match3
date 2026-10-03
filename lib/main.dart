@@ -67,6 +67,17 @@ class _WahaHomePageState extends State<WahaHomePage> {
     });
   }
 
+  void _toggleSound() {
+    final session = _session;
+    if (session == null) {
+      return;
+    }
+
+    setState(() {
+      session.setSoundEnabled(!session.soundEnabled);
+    });
+  }
+
   void _handleSwipe(BoardPosition position, Direction direction) {
     final session = _session;
     if (session == null || session.isLevelComplete) {
@@ -94,6 +105,7 @@ class _WahaHomePageState extends State<WahaHomePage> {
         message: _message,
         onHome: _goHome,
         onNextLevel: _nextLevel,
+        onToggleSound: _toggleSound,
         onSwipe: _handleSwipe,
       );
     }
@@ -173,6 +185,7 @@ class GamePage extends StatelessWidget {
     required this.message,
     required this.onHome,
     required this.onNextLevel,
+    required this.onToggleSound,
     required this.onSwipe,
     super.key,
   });
@@ -181,6 +194,7 @@ class GamePage extends StatelessWidget {
   final String? message;
   final VoidCallback onHome;
   final VoidCallback onNextLevel;
+  final VoidCallback onToggleSound;
   final void Function(BoardPosition position, Direction direction) onSwipe;
 
   @override
@@ -189,7 +203,7 @@ class GamePage extends StatelessWidget {
       body: SafeArea(
         child: LayoutBuilder(
           builder: (context, constraints) {
-            final boardExtent = constraints.maxWidth.clamp(280.0, 560.0);
+            final boardExtent = constraints.maxWidth.clamp(280.0, 560.0).toDouble();
             return SingleChildScrollView(
               child: Padding(
                 padding: const EdgeInsets.all(16),
@@ -205,7 +219,7 @@ class GamePage extends StatelessWidget {
                         const Spacer(),
                         IconButton(
                           tooltip: session.soundEnabled ? 'Выключить звук' : 'Включить звук',
-                          onPressed: () => session.setSoundEnabled(!session.soundEnabled),
+                          onPressed: onToggleSound,
                           icon: Icon(session.soundEnabled ? Icons.volume_up : Icons.volume_off),
                         ),
                       ],
@@ -357,10 +371,10 @@ class GemTile extends StatelessWidget {
         decoration: BoxDecoration(
           color: style.color,
           borderRadius: BorderRadius.circular(7),
-          border: Border.all(color: Colors.white.withValues(alpha: 0.24)),
+          border: Border.all(color: Colors.white.withOpacity(0.24)),
           boxShadow: [
             BoxShadow(
-              color: style.color.withValues(alpha: 0.28),
+              color: style.color.withOpacity(0.28),
               blurRadius: 10,
               offset: const Offset(0, 3),
             ),
