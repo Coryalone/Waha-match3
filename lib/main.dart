@@ -497,6 +497,8 @@ class _GameBoardViewState extends State<GameBoardView> {
   BoardPosition? _dragFrom;
   BoardPosition? _previewTo;
   Direction? _direction;
+  int? _dragGem;
+  int? _otherGem;
   Offset _drag = Offset.zero;
   bool _settling = false;
 
@@ -519,6 +521,8 @@ class _GameBoardViewState extends State<GameBoardView> {
     }
     setState(() {
       _dragFrom = from;
+      _dragGem = widget.cells[row][col];
+      _otherGem = null;
       _drag = Offset.zero;
       _direction = null;
       _previewTo = null;
@@ -536,6 +540,7 @@ class _GameBoardViewState extends State<GameBoardView> {
         _drag = Offset.zero;
         _previewTo = null;
         _direction = null;
+        _otherGem = null;
       });
       return;
     }
@@ -550,6 +555,7 @@ class _GameBoardViewState extends State<GameBoardView> {
     setState(() {
       _drag = drag;
       _direction = direction;
+      _otherGem = to == null ? null : widget.cells[to.row][to.col];
       _previewTo = direction != null && axis.abs() >= pitch / 2 ? to : null;
     });
   }
@@ -580,6 +586,8 @@ class _GameBoardViewState extends State<GameBoardView> {
       _dragFrom = null;
       _previewTo = null;
       _direction = null;
+      _dragGem = null;
+      _otherGem = null;
       _drag = Offset.zero;
       _settling = false;
     });
@@ -597,6 +605,8 @@ class _GameBoardViewState extends State<GameBoardView> {
       setState(() {
         _dragFrom = null;
         _direction = null;
+        _dragGem = null;
+        _otherGem = null;
         _settling = false;
       });
     });
@@ -666,7 +676,7 @@ class _GameBoardViewState extends State<GameBoardView> {
                         (to == other ? _offset(direction!, pitch).dy : 0),
                     width: cell,
                     height: cell,
-                    child: GemTile(gem: widget.cells[other.row][other.col]),
+                    child: GemTile(gem: _otherGem!),
                   ),
                 if (from != null)
                   AnimatedPositioned(
@@ -676,7 +686,7 @@ class _GameBoardViewState extends State<GameBoardView> {
                     top: from.row * pitch + _drag.dy,
                     width: cell,
                     height: cell,
-                    child: GemTile(gem: widget.cells[from.row][from.col]),
+                    child: GemTile(gem: _dragGem!),
                   ),
               ],
             ),
