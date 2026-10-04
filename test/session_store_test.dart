@@ -6,7 +6,13 @@ import 'package:waha_match3/core/session_store.dart';
 
 void main() {
   test('saved session restores level, score, exact board, and sound', () {
-    final original = GameSession.newGame(random: Random(11));
+    final board = GameSession.newGame(random: Random(11)).board.cells;
+    final original = GameSession.restore(
+      level: 3,
+      score: 42,
+      cells: board,
+      soundEnabled: false,
+    );
     final restored = SessionStore.decode(SessionStore.encode(original));
 
     expect(restored.level, original.level);
