@@ -56,6 +56,10 @@ class GameSession {
   bool get isDemoComplete => isLevelComplete && level == demoLevelCount;
 
   MoveResult swipe(BoardPosition from, Direction direction) {
+    return swipeWithSteps(from, direction);
+  }
+
+  MoveResult swipeWithSteps(BoardPosition from, Direction direction) {
     if (isLevelComplete) {
       return const MoveResult(
         accepted: false,
@@ -65,7 +69,7 @@ class GameSession {
       );
     }
 
-    final result = board.swipe(from, direction);
+    final result = board.swipeWithSteps(from, direction);
     if (result.accepted) {
       score = _clampScore(score + result.scoreDelta);
     }
