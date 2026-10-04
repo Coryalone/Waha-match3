@@ -154,3 +154,4 @@ List<List<int>> _boardWithCrossMatch() {
     [3, 5, 2, 2, 4, 5, 0, 1],
   ];
 }
+
