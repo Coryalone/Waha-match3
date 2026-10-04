@@ -46,6 +46,7 @@ class _WahaHomePageState extends State<WahaHomePage> {
   bool _isPlaying = false;
   bool _inputLocked = false;
   String? _message;
+  List<List<int>>? _animatedCells;
   Set<BoardPosition> _vanishingPositions = {};
 
   void _startGame() {
@@ -53,6 +54,7 @@ class _WahaHomePageState extends State<WahaHomePage> {
       _session ??= GameSession.newGame();
       _isPlaying = true;
       _message = null;
+      _animatedCells = null;
       _vanishingPositions = {};
       _inputLocked = false;
     });
@@ -63,6 +65,7 @@ class _WahaHomePageState extends State<WahaHomePage> {
     setState(() {
       _isPlaying = false;
       _message = null;
+      _animatedCells = null;
       _vanishingPositions = {};
       _inputLocked = false;
     });
@@ -78,6 +81,7 @@ class _WahaHomePageState extends State<WahaHomePage> {
     setState(() {
       session.startNextLevel();
       _message = null;
+      _animatedCells = null;
       _vanishingPositions = {};
       _inputLocked = false;
     });
@@ -112,12 +116,12 @@ class _WahaHomePageState extends State<WahaHomePage> {
       return;
     }
 
-    final before = session.board.cells;
     late final MoveResult result;
     setState(() {
       _inputLocked = true;
+      _animatedCells = null;
       _vanishingPositions = {};
-      result = session.swipe(position, direction);
+      result = session.swipeWithSteps(position, direction);
       if (!result.accepted) {
         _message = 'Ход не собрал 3 в ряд';
         _inputLocked = false;
@@ -136,34 +140,39 @@ class _WahaHomePageState extends State<WahaHomePage> {
       await SystemSound.play(SystemSoundType.click);
     }
 
-    final changed = _changedPositions(before, session.board.cells);
-    if (changed.isNotEmpty && mounted) {
-      setState(() {
-        _vanishingPositions = changed;
-      });
-      await Future<void>.delayed(const Duration(milliseconds: 190));
-    }
+    await _playCascadeAnimation(result.steps);
 
     if (!mounted) {
       return;
     }
 
     setState(() {
+      _animatedCells = null;
       _vanishingPositions = {};
       _inputLocked = false;
     });
   }
 
-  Set<BoardPosition> _changedPositions(List<List<int>> before, List<List<int>> after) {
-    final changed = <BoardPosition>{};
-    for (var row = 0; row < boardSize; row++) {
-      for (var col = 0; col < boardSize; col++) {
-        if (before[row][col] != after[row][col]) {
-          changed.add(BoardPosition(row, col));
-        }
+  Future<void> _playCascadeAnimation(List<CascadeStep> steps) async {
+    for (final step in steps) {
+      if (!mounted) {
+        return;
       }
+      setState(() {
+        _animatedCells = step.beforeClearCells;
+        _vanishingPositions = step.clearedPositions;
+      });
+      await Future<void>.delayed(const Duration(milliseconds: 240));
+
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _animatedCells = step.afterDropCells;
+        _vanishingPositions = {};
+      });
+      await Future<void>.delayed(const Duration(milliseconds: 230));
     }
-    return changed;
   }
 
   @override
@@ -180,6 +189,7 @@ class _WahaHomePageState extends State<WahaHomePage> {
         session: session,
         message: _message,
         inputLocked: _inputLocked,
+        displayCells: _animatedCells ?? session.board.cells,
         vanishingPositions: _vanishingPositions,
         onHome: _goHome,
         onNextLevel: _nextLevel,
@@ -262,6 +272,7 @@ class GamePage extends StatelessWidget {
     required this.session,
     required this.message,
     required this.inputLocked,
+    required this.displayCells,
     required this.vanishingPositions,
     required this.onHome,
     required this.onNextLevel,
@@ -273,6 +284,7 @@ class GamePage extends StatelessWidget {
   final GameSession session;
   final String? message;
   final bool inputLocked;
+  final List<List<int>> displayCells;
   final Set<BoardPosition> vanishingPositions;
   final VoidCallback onHome;
   final VoidCallback onNextLevel;
@@ -323,7 +335,7 @@ class GamePage extends StatelessWidget {
                       width: boardExtent,
                       height: boardExtent,
                       child: GameBoardView(
-                        board: session.board,
+                        cells: displayCells,
                         enabled: !session.isLevelComplete && !inputLocked,
                         vanishingPositions: vanishingPositions,
                         onSwipe: onSwipe,
@@ -380,21 +392,20 @@ class GamePage extends StatelessWidget {
 
 class GameBoardView extends StatelessWidget {
   const GameBoardView({
-    required this.board,
+    required this.cells,
     required this.enabled,
     required this.vanishingPositions,
     required this.onSwipe,
     super.key,
   });
 
-  final GameBoard board;
+  final List<List<int>> cells;
   final bool enabled;
   final Set<BoardPosition> vanishingPositions;
   final void Function(BoardPosition position, Direction direction) onSwipe;
 
   @override
   Widget build(BuildContext context) {
-    final cells = board.cells;
     return Container(
       padding: const EdgeInsets.all(8),
       decoration: BoxDecoration(
@@ -487,10 +498,10 @@ class _GemTileState extends State<GemTile> {
       child: AnimatedScale(
         duration: const Duration(milliseconds: 180),
         curve: Curves.easeInOut,
-        scale: widget.disappearing ? 0.35 : 1,
+        scale: widget.disappearing ? 0.2 : 1,
         child: AnimatedOpacity(
           duration: const Duration(milliseconds: 180),
-          opacity: widget.disappearing ? 0.12 : 1,
+          opacity: widget.disappearing ? 0 : 1,
           child: AnimatedSwitcher(
             duration: const Duration(milliseconds: 220),
             switchInCurve: Curves.easeOutBack,
@@ -499,7 +510,7 @@ class _GemTileState extends State<GemTile> {
               return FadeTransition(
                 opacity: animation,
                 child: ScaleTransition(
-                  scale: Tween<double>(begin: 0.74, end: 1).animate(animation),
+                  scale: Tween<double>(begin: 0.68, end: 1).animate(animation),
                   child: child,
                 ),
               );
