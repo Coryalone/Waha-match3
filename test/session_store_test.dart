@@ -25,7 +25,7 @@ void main() {
     expect(() => SessionStore.decode('{"version":2}'), throwsFormatException);
     expect(
       () => SessionStore.decode('{"version":1,"cells":[]}'),
-      throwsArgumentError,
+      throwsFormatException,
     );
   });
 }
