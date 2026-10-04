@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 
 import 'core/game_core.dart';
 import 'core/game_session.dart';
+import 'core/session_store.dart';
 
 void main() {
   runApp(const WahaMatch3App());
@@ -39,15 +40,61 @@ class WahaHomePage extends StatefulWidget {
   State<WahaHomePage> createState() => _WahaHomePageState();
 }
 
-class _WahaHomePageState extends State<WahaHomePage> {
+class _WahaHomePageState extends State<WahaHomePage>
+    with WidgetsBindingObserver {
   final AudioPlayer _musicPlayer = AudioPlayer();
+  final SessionStore _store = SessionStore();
+  Future<void> _pendingSave = Future<void>.value();
 
   GameSession? _session;
+  bool _loading = true;
   bool _isPlaying = false;
   bool _inputLocked = false;
   String? _message;
   List<List<int>>? _animatedCells;
   Set<BoardPosition> _vanishingPositions = {};
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    unawaited(_loadSession());
+  }
+
+  Future<void> _loadSession() async {
+    GameSession? session;
+    try {
+      session = await _store.load();
+    } catch (_) {
+      session = null;
+    }
+    if (!mounted) return;
+    setState(() {
+      _session = session;
+      _loading = false;
+    });
+  }
+
+  void _persistSession() {
+    final session = _session;
+    if (session == null) return;
+    final data = SessionStore.encode(session);
+    _pendingSave = _pendingSave.catchError((Object _) {}).then((_) async {
+      try {
+        await _store.saveEncoded(data);
+      } catch (_) {
+        if (mounted) setState(() => _message = 'Не удалось сохранить игру');
+      }
+    });
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.inactive ||
+        state == AppLifecycleState.paused) {
+      _persistSession();
+    }
+  }
 
   void _startGame() {
     setState(() {
@@ -58,6 +105,7 @@ class _WahaHomePageState extends State<WahaHomePage> {
       _vanishingPositions = {};
       _inputLocked = false;
     });
+    _persistSession();
     unawaited(_syncBackgroundMusic());
   }
 
@@ -69,6 +117,7 @@ class _WahaHomePageState extends State<WahaHomePage> {
       _vanishingPositions = {};
       _inputLocked = false;
     });
+    _persistSession();
     unawaited(_syncBackgroundMusic());
   }
 
@@ -85,6 +134,7 @@ class _WahaHomePageState extends State<WahaHomePage> {
       _vanishingPositions = {};
       _inputLocked = false;
     });
+    _persistSession();
   }
 
   void _toggleSound() {
@@ -96,6 +146,7 @@ class _WahaHomePageState extends State<WahaHomePage> {
     setState(() {
       session.setSoundEnabled(!session.soundEnabled);
     });
+    _persistSession();
     unawaited(_syncBackgroundMusic());
   }
 
@@ -110,16 +161,21 @@ class _WahaHomePageState extends State<WahaHomePage> {
     }
   }
 
-  Future<void> _handleSwipe(BoardPosition position, Direction direction) async {
+  bool _handleSwipe(BoardPosition position, Direction direction) {
     final session = _session;
     if (session == null || session.isLevelComplete || _inputLocked) {
-      return;
+      return false;
     }
 
+    final swapped = session.board.cells;
+    final target = position.neighbor(direction);
+    if (!target.isInside) return false;
+    final gem = swapped[position.row][position.col];
+    swapped[position.row][position.col] = swapped[target.row][target.col];
+    swapped[target.row][target.col] = gem;
     late final MoveResult result;
     setState(() {
       _inputLocked = true;
-      _animatedCells = null;
       _vanishingPositions = {};
       result = session.swipeWithSteps(position, direction);
       if (!result.accepted) {
@@ -130,22 +186,25 @@ class _WahaHomePageState extends State<WahaHomePage> {
       } else {
         _message = null;
       }
+      _animatedCells = result.accepted ? swapped : null;
     });
 
     if (!result.accepted) {
-      return;
+      return false;
     }
+    _persistSession();
 
     if (session.soundEnabled) {
-      await SystemSound.play(SystemSoundType.click);
+      unawaited(SystemSound.play(SystemSoundType.click));
     }
+    unawaited(_finishMove(result.steps));
+    return true;
+  }
 
-    await _playCascadeAnimation(result.steps);
-
-    if (!mounted) {
-      return;
-    }
-
+  Future<void> _finishMove(List<CascadeStep> steps) async {
+    await Future<void>.delayed(const Duration(milliseconds: 170));
+    await _playCascadeAnimation(steps);
+    if (!mounted) return;
     setState(() {
       _animatedCells = null;
       _vanishingPositions = {};
@@ -177,12 +236,16 @@ class _WahaHomePageState extends State<WahaHomePage> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     unawaited(_musicPlayer.dispose());
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
+    if (_loading) {
+      return const Scaffold(body: Center(child: CircularProgressIndicator()));
+    }
     final session = _session;
     if (_isPlaying && session != null) {
       return GamePage(
@@ -253,7 +316,9 @@ class MainMenuPage extends StatelessWidget {
                   child: Padding(
                     padding: const EdgeInsets.symmetric(vertical: 14),
                     child: Text(
-                      hasSession ? 'Продолжить — уровень $savedLevel' : 'Играть',
+                      hasSession
+                          ? 'Продолжить — уровень $savedLevel'
+                          : 'Играть',
                       style: const TextStyle(fontSize: 18),
                     ),
                   ),
@@ -289,7 +354,7 @@ class GamePage extends StatelessWidget {
   final VoidCallback onHome;
   final VoidCallback onNextLevel;
   final VoidCallback onToggleSound;
-  final void Function(BoardPosition position, Direction direction) onSwipe;
+  final bool Function(BoardPosition position, Direction direction) onSwipe;
 
   @override
   Widget build(BuildContext context) {
@@ -297,7 +362,9 @@ class GamePage extends StatelessWidget {
       body: SafeArea(
         child: LayoutBuilder(
           builder: (context, constraints) {
-            final boardExtent = constraints.maxWidth.clamp(280.0, 560.0).toDouble();
+            final boardExtent = constraints.maxWidth
+                .clamp(280.0, 560.0)
+                .toDouble();
             return SingleChildScrollView(
               child: Padding(
                 padding: const EdgeInsets.all(16),
@@ -312,15 +379,24 @@ class GamePage extends StatelessWidget {
                         ),
                         const Spacer(),
                         IconButton(
-                          tooltip: session.soundEnabled ? 'Выключить звук' : 'Включить звук',
+                          tooltip: session.soundEnabled
+                              ? 'Выключить звук'
+                              : 'Включить звук',
                           onPressed: onToggleSound,
-                          icon: Icon(session.soundEnabled ? Icons.volume_up : Icons.volume_off),
+                          icon: Icon(
+                            session.soundEnabled
+                                ? Icons.volume_up
+                                : Icons.volume_off,
+                          ),
                         ),
                       ],
                     ),
                     Text(
                       'Уровень ${session.level}',
-                      style: const TextStyle(fontSize: 24, fontWeight: FontWeight.w700),
+                      style: const TextStyle(
+                        fontSize: 24,
+                        fontWeight: FontWeight.w700,
+                      ),
                     ),
                     const SizedBox(height: 6),
                     Text(
@@ -358,8 +434,13 @@ class GamePage extends StatelessWidget {
                     if (session.isLevelComplete) ...[
                       const SizedBox(height: 18),
                       Text(
-                        session.isDemoComplete ? 'Демо пройдено' : 'Уровень пройден',
-                        style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w700),
+                        session.isDemoComplete
+                            ? 'Демо пройдено'
+                            : 'Уровень пройден',
+                        style: const TextStyle(
+                          fontSize: 22,
+                          fontWeight: FontWeight.w700,
+                        ),
                       ),
                       const SizedBox(height: 12),
                       Wrap(
@@ -390,7 +471,7 @@ class GamePage extends StatelessWidget {
   }
 }
 
-class GameBoardView extends StatelessWidget {
+class GameBoardView extends StatefulWidget {
   const GameBoardView({
     required this.cells,
     required this.enabled,
@@ -402,147 +483,254 @@ class GameBoardView extends StatelessWidget {
   final List<List<int>> cells;
   final bool enabled;
   final Set<BoardPosition> vanishingPositions;
-  final void Function(BoardPosition position, Direction direction) onSwipe;
+  final bool Function(BoardPosition position, Direction direction) onSwipe;
+
+  @override
+  State<GameBoardView> createState() => _GameBoardViewState();
+}
+
+class _GameBoardViewState extends State<GameBoardView> {
+  static const double _gap = 6;
+  static const double _inset = 8;
+  static const _snapDuration = Duration(milliseconds: 160);
+
+  BoardPosition? _dragFrom;
+  BoardPosition? _previewTo;
+  Direction? _direction;
+  Offset _drag = Offset.zero;
+  bool _settling = false;
+
+  Direction? _directionFor(Offset delta) {
+    if (delta.distance < 3) return null;
+    if (delta.dx.abs() >= delta.dy.abs()) {
+      return delta.dx > 0 ? Direction.right : Direction.left;
+    }
+    return delta.dy > 0 ? Direction.down : Direction.up;
+  }
+
+  void _start(DragStartDetails details, double cell, double pitch) {
+    if (!widget.enabled || _settling) return;
+    final local = details.localPosition - const Offset(_inset, _inset);
+    final col = (local.dx / pitch).floor();
+    final row = (local.dy / pitch).floor();
+    final from = BoardPosition(row, col);
+    if (!from.isInside || local.dx % pitch > cell || local.dy % pitch > cell) {
+      return;
+    }
+    setState(() {
+      _dragFrom = from;
+      _drag = Offset.zero;
+      _direction = null;
+      _previewTo = null;
+    });
+  }
+
+  void _update(DragUpdateDetails details, double pitch) {
+    final from = _dragFrom;
+    if (from == null || _settling) return;
+    final delta = _drag + details.delta;
+    final direction = _directionFor(delta);
+    final to = direction == null ? null : from.neighbor(direction);
+    if (to != null && !to.isInside) {
+      setState(() {
+        _drag = Offset.zero;
+        _previewTo = null;
+        _direction = null;
+      });
+      return;
+    }
+    final axis = direction == Direction.left || direction == Direction.right
+        ? delta.dx.clamp(-pitch, pitch).toDouble()
+        : delta.dy.clamp(-pitch, pitch).toDouble();
+    final drag = direction == null
+        ? Offset.zero
+        : direction == Direction.left || direction == Direction.right
+        ? Offset(axis, 0)
+        : Offset(0, axis);
+    setState(() {
+      _drag = drag;
+      _direction = direction;
+      _previewTo = direction != null && axis.abs() >= pitch / 2 ? to : null;
+    });
+  }
+
+  Future<void> _end(double pitch) async {
+    final from = _dragFrom;
+    if (from == null || _settling) return;
+    final to = _previewTo;
+    final direction = _direction;
+    setState(() {
+      _settling = true;
+      _drag = to == null ? Offset.zero : _offset(direction!, pitch);
+    });
+    await Future<void>.delayed(_snapDuration);
+    if (!mounted) return;
+    if (to != null && direction != null && widget.enabled) {
+      final accepted = widget.onSwipe(from, direction);
+      if (!accepted) {
+        setState(() {
+          _drag = Offset.zero;
+          _previewTo = null;
+        });
+        await Future<void>.delayed(_snapDuration);
+      }
+    }
+    if (!mounted) return;
+    setState(() {
+      _dragFrom = null;
+      _previewTo = null;
+      _direction = null;
+      _drag = Offset.zero;
+      _settling = false;
+    });
+  }
+
+  void _cancel() {
+    if (_dragFrom == null || _settling) return;
+    setState(() {
+      _settling = true;
+      _drag = Offset.zero;
+      _previewTo = null;
+    });
+    Future<void>.delayed(_snapDuration, () {
+      if (!mounted) return;
+      setState(() {
+        _dragFrom = null;
+        _direction = null;
+        _settling = false;
+      });
+    });
+  }
+
+  Offset _offset(Direction direction, double pitch) => switch (direction) {
+    Direction.left => Offset(-pitch, 0),
+    Direction.right => Offset(pitch, 0),
+    Direction.up => Offset(0, -pitch),
+    Direction.down => Offset(0, pitch),
+  };
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(8),
-      decoration: BoxDecoration(
-        color: const Color(0xFF1B1E26),
-        border: Border.all(color: const Color(0xFFBFA76A), width: 1.5),
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: GridView.builder(
-        physics: const NeverScrollableScrollPhysics(),
-        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-          crossAxisCount: boardSize,
-          mainAxisSpacing: 6,
-          crossAxisSpacing: 6,
-        ),
-        itemCount: boardSize * boardSize,
-        itemBuilder: (context, index) {
-          final row = index ~/ boardSize;
-          final col = index % boardSize;
-          final position = BoardPosition(row, col);
-          return GemTile(
-            gem: cells[row][col],
-            enabled: enabled,
-            disappearing: vanishingPositions.contains(position),
-            onSwipe: (direction) => onSwipe(position, direction),
-          );
-        },
-      ),
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final extent = constraints.maxWidth - 2 * _inset - 2;
+        final cell = (extent - (boardSize - 1) * _gap) / boardSize;
+        final pitch = cell + _gap;
+        final from = _dragFrom;
+        final to = _previewTo;
+        final direction = _direction;
+        final other = from == null || direction == null
+            ? null
+            : from.neighbor(direction);
+        return GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onPanStart: widget.enabled ? (d) => _start(d, cell, pitch) : null,
+          onPanUpdate: widget.enabled ? (d) => _update(d, pitch) : null,
+          onPanEnd: widget.enabled ? (_) => _end(pitch) : null,
+          onPanCancel: widget.enabled ? _cancel : null,
+          child: Container(
+            padding: const EdgeInsets.all(_inset),
+            decoration: BoxDecoration(
+              color: const Color(0xFF1B1E26),
+              border: Border.all(color: const Color(0xFFBFA76A), width: 1.5),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Stack(
+              clipBehavior: Clip.none,
+              children: [
+                for (var row = 0; row < boardSize; row++)
+                  for (var col = 0; col < boardSize; col++)
+                    if (BoardPosition(row, col) != from &&
+                        BoardPosition(row, col) != other)
+                      Positioned(
+                        left: col * pitch,
+                        top: row * pitch,
+                        width: cell,
+                        height: cell,
+                        child: GemTile(
+                          gem: widget.cells[row][col],
+                          disappearing: widget.vanishingPositions.contains(
+                            BoardPosition(row, col),
+                          ),
+                        ),
+                      ),
+                if (other != null && other.isInside)
+                  AnimatedPositioned(
+                    duration: _snapDuration,
+                    curve: Curves.easeOutCubic,
+                    left:
+                        other.col * pitch -
+                        (to == other ? _offset(direction!, pitch).dx : 0),
+                    top:
+                        other.row * pitch -
+                        (to == other ? _offset(direction!, pitch).dy : 0),
+                    width: cell,
+                    height: cell,
+                    child: GemTile(gem: widget.cells[other.row][other.col]),
+                  ),
+                if (from != null)
+                  AnimatedPositioned(
+                    duration: _settling ? _snapDuration : Duration.zero,
+                    curve: Curves.easeOutCubic,
+                    left: from.col * pitch + _drag.dx,
+                    top: from.row * pitch + _drag.dy,
+                    width: cell,
+                    height: cell,
+                    child: GemTile(gem: widget.cells[from.row][from.col]),
+                  ),
+              ],
+            ),
+          ),
+        );
+      },
     );
   }
 }
 
-class GemTile extends StatefulWidget {
-  const GemTile({
-    required this.gem,
-    required this.enabled,
-    required this.disappearing,
-    required this.onSwipe,
-    super.key,
-  });
+class GemTile extends StatelessWidget {
+  const GemTile({required this.gem, this.disappearing = false, super.key});
 
   final int gem;
-  final bool enabled;
   final bool disappearing;
-  final void Function(Direction direction) onSwipe;
-
-  @override
-  State<GemTile> createState() => _GemTileState();
-}
-
-class _GemTileState extends State<GemTile> {
-  static const double _dragThreshold = 18;
-
-  Offset _dragOffset = Offset.zero;
-  bool _sentSwipe = false;
-
-  void _resetDrag() {
-    _dragOffset = Offset.zero;
-    _sentSwipe = false;
-  }
-
-  void _updateDrag(DragUpdateDetails details) {
-    if (!widget.enabled || _sentSwipe) {
-      return;
-    }
-
-    _dragOffset += details.delta;
-    final dx = _dragOffset.dx;
-    final dy = _dragOffset.dy;
-    if (dx.abs() < _dragThreshold && dy.abs() < _dragThreshold) {
-      return;
-    }
-
-    _sentSwipe = true;
-    if (dx.abs() > dy.abs()) {
-      widget.onSwipe(dx > 0 ? Direction.right : Direction.left);
-    } else {
-      widget.onSwipe(dy > 0 ? Direction.down : Direction.up);
-    }
-  }
 
   @override
   Widget build(BuildContext context) {
-    final style = _gemStyles[widget.gem % _gemStyles.length];
-    return GestureDetector(
-      behavior: HitTestBehavior.opaque,
-      onPanStart: widget.enabled ? (_) => _resetDrag() : null,
-      onPanUpdate: widget.enabled ? _updateDrag : null,
-      onPanEnd: widget.enabled ? (_) => _resetDrag() : null,
-      onPanCancel: widget.enabled ? _resetDrag : null,
-      child: AnimatedScale(
+    final style = _gemStyles[gem % _gemStyles.length];
+    return AnimatedScale(
+      duration: const Duration(milliseconds: 180),
+      curve: Curves.easeInOut,
+      scale: disappearing ? 0.2 : 1,
+      child: AnimatedOpacity(
         duration: const Duration(milliseconds: 180),
-        curve: Curves.easeInOut,
-        scale: widget.disappearing ? 0.2 : 1,
-        child: AnimatedOpacity(
-          duration: const Duration(milliseconds: 180),
-          opacity: widget.disappearing ? 0 : 1,
-          child: AnimatedSwitcher(
-            duration: const Duration(milliseconds: 220),
-            switchInCurve: Curves.easeOutBack,
-            switchOutCurve: Curves.easeIn,
-            transitionBuilder: (child, animation) {
-              return FadeTransition(
-                opacity: animation,
-                child: ScaleTransition(
-                  scale: Tween<double>(begin: 0.68, end: 1).animate(animation),
-                  child: child,
+        opacity: disappearing ? 0 : 1,
+        child: AnimatedSwitcher(
+          duration: const Duration(milliseconds: 220),
+          child: Container(
+            key: ValueKey(gem),
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              color: style.color,
+              borderRadius: BorderRadius.circular(7),
+              border: Border.all(color: Colors.white.withOpacity(0.24)),
+              boxShadow: [
+                BoxShadow(
+                  color: style.color.withOpacity(0.28),
+                  blurRadius: 10,
+                  offset: const Offset(0, 3),
                 ),
-              );
-            },
-            child: AnimatedContainer(
-              key: ValueKey(widget.gem),
-              duration: const Duration(milliseconds: 180),
-              alignment: Alignment.center,
-              decoration: BoxDecoration(
-                color: style.color,
-                borderRadius: BorderRadius.circular(7),
-                border: Border.all(color: Colors.white.withOpacity(0.24)),
-                boxShadow: [
-                  BoxShadow(
-                    color: style.color.withOpacity(0.28),
-                    blurRadius: 10,
-                    offset: const Offset(0, 3),
-                  ),
-                ],
-              ),
-              child: FittedBox(
-                fit: BoxFit.scaleDown,
-                child: Padding(
-                  padding: const EdgeInsets.all(6),
-                  child: Text(
-                    style.symbol,
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 24,
-                      fontWeight: FontWeight.w800,
-                      letterSpacing: 0,
-                    ),
+              ],
+            ),
+            child: FittedBox(
+              fit: BoxFit.scaleDown,
+              child: Padding(
+                padding: const EdgeInsets.all(6),
+                child: Text(
+                  style.symbol,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 24,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: 0,
                   ),
                 ),
               ),
@@ -569,3 +757,4 @@ const _gemStyles = [
   _GemStyle(Color(0xFF7A4FA3), '✚'),
   _GemStyle(Color(0xFFB45C32), '⬡'),
 ];
+
