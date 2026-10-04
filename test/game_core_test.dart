@@ -61,6 +61,19 @@ void main() {
       expect(board.hasMatches, isFalse);
       expect(board.hasAvailableMove, isTrue);
     });
+
+    test('returns cascade animation steps for a valid swap', () {
+      final board = GameBoard.newPlayable(random: Random(6));
+      final move = _findMove(board, shouldCreateMatch: true);
+
+      final result = board.swipeWithSteps(move.from, move.direction);
+
+      expect(result.accepted, isTrue);
+      expect(result.steps, isNotEmpty);
+      expect(result.steps.first.clearedPositions.length, greaterThanOrEqualTo(3));
+      expect(result.steps.first.beforeClearCells, hasLength(boardSize));
+      expect(result.steps.first.afterDropCells, hasLength(boardSize));
+    });
   });
 }
 
