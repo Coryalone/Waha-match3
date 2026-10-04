@@ -70,9 +70,28 @@ void main() {
 
       expect(result.accepted, isTrue);
       expect(result.steps, isNotEmpty);
-      expect(result.steps.first.clearedPositions.length, greaterThanOrEqualTo(3));
+      expect(
+        result.steps.first.clearedPositions.length,
+        greaterThanOrEqualTo(3),
+      );
       expect(result.steps.first.beforeClearCells, hasLength(boardSize));
       expect(result.steps.first.afterDropCells, hasLength(boardSize));
+      for (final step in result.steps) {
+        final falls = step.falls;
+        expect(falls, hasLength(boardSize * boardSize));
+        expect(
+          falls.map((fall) => fall.to).toSet(),
+          hasLength(boardSize * boardSize),
+        );
+        expect(
+          falls.where((fall) => fall.from.row < 0),
+          hasLength(step.clearedPositions.length),
+        );
+        for (final fall in falls) {
+          expect(fall.from.row, lessThanOrEqualTo(fall.to.row));
+          expect(fall.gem, step.afterDropCells[fall.to.row][fall.to.col]);
+        }
+      }
     });
   });
 }
