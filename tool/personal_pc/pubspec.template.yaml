@@ -1,0 +1,16 @@
+name: waha_personal_pc
+publish_to: none
+version: 0.1.0+1
+environment:
+  sdk: ^3.9.0
+dependencies:
+  flutter:
+    sdk: flutter
+  waha_match3:
+    path: __PROJECT_PATH_JSON__
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/audio/background.mp3
+    - assets/local_tiles/
+

@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/gestures.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
 import 'core/game_core.dart';
@@ -743,6 +744,17 @@ class GemTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final style = _gemStyles[gem % _gemStyles.length];
+    final symbol = Text(
+      style.symbol,
+      style: const TextStyle(
+        color: Colors.white,
+        fontSize: 24,
+        fontWeight: FontWeight.w800,
+        letterSpacing: 0,
+      ),
+    );
+    const personalTiles = bool.fromEnvironment('PERSONAL_TILES');
+    final usePersonalTiles = kIsWeb && personalTiles;
     return AnimatedScale(
       duration: const Duration(milliseconds: 180),
       curve: Curves.easeInOut,
@@ -768,15 +780,17 @@ class GemTile extends StatelessWidget {
             fit: BoxFit.scaleDown,
             child: Padding(
               padding: const EdgeInsets.all(6),
-              child: Text(
-                style.symbol,
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 24,
-                  fontWeight: FontWeight.w800,
-                  letterSpacing: 0,
-                ),
-              ),
+              child: usePersonalTiles
+                  ? SizedBox(
+                      width: 32,
+                      height: 32,
+                      child: Image.asset(
+                        'assets/local_tiles/${gem % _gemStyles.length}.png',
+                        fit: BoxFit.contain,
+                        errorBuilder: (_, _, _) => Center(child: symbol),
+                      ),
+                    )
+                  : symbol,
             ),
           ),
         ),

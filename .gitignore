@@ -31,3 +31,7 @@ Thumbs.db
 .env
 .env.*
 !.env.example
+
+# Personal artwork stays local and is never declared by the Android app.
+.local/
+
