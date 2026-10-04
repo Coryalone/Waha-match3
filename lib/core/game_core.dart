@@ -38,18 +38,32 @@ class MatchGroup {
   final Set<BoardPosition> positions;
 }
 
+class CascadeStep {
+  const CascadeStep({
+    required this.beforeClearCells,
+    required this.clearedPositions,
+    required this.afterDropCells,
+  });
+
+  final List<List<int>> beforeClearCells;
+  final Set<BoardPosition> clearedPositions;
+  final List<List<int>> afterDropCells;
+}
+
 class MoveResult {
   const MoveResult({
     required this.accepted,
     required this.scoreDelta,
     required this.cascadeCount,
     required this.reshuffled,
+    this.steps = const [],
   });
 
   final bool accepted;
   final int scoreDelta;
   final int cascadeCount;
   final bool reshuffled;
+  final List<CascadeStep> steps;
 }
 
 class GameBoard {
@@ -85,7 +99,7 @@ class GameBoard {
   final List<List<int>> _cells;
   final Random _random;
 
-  List<List<int>> get cells => [for (final row in _cells) List<int>.of(row)];
+  List<List<int>> get cells => _copyCells(_cells);
 
   int gemAt(BoardPosition position) => _cells[position.row][position.col];
 
@@ -113,40 +127,40 @@ class GameBoard {
   }
 
   MoveResult swipe(BoardPosition from, Direction direction) {
+    return swipeWithSteps(from, direction);
+  }
+
+  MoveResult swipeWithSteps(BoardPosition from, Direction direction) {
     final to = from.neighbor(direction);
     if (!from.isInside || !to.isInside) {
-      return const MoveResult(
-        accepted: false,
-        scoreDelta: 0,
-        cascadeCount: 0,
-        reshuffled: false,
-      );
+      return _rejectedMove;
     }
 
     _swap(from, to);
     if (findMatches().isEmpty) {
       _swap(from, to);
-      return const MoveResult(
-        accepted: false,
-        scoreDelta: 0,
-        cascadeCount: 0,
-        reshuffled: false,
-      );
+      return _rejectedMove;
     }
 
-    final cascade = resolveCascades();
+    final cascade = resolveCascadesWithSteps();
     final didReshuffle = ensurePlayable();
     return MoveResult(
       accepted: true,
       scoreDelta: cascade.scoreDelta,
       cascadeCount: cascade.cascadeCount,
       reshuffled: didReshuffle,
+      steps: cascade.steps,
     );
   }
 
   CascadeResult resolveCascades() {
+    return resolveCascadesWithSteps();
+  }
+
+  CascadeResult resolveCascadesWithSteps() {
     var totalScore = 0;
     var cascadeCount = 0;
+    final steps = <CascadeStep>[];
 
     while (true) {
       final matchedPositions = _uniqueMatchedPositions();
@@ -154,13 +168,23 @@ class GameBoard {
         break;
       }
 
+      final beforeClear = cells;
       totalScore += matchedPositions.length;
       cascadeCount++;
       _clear(matchedPositions);
       _applyGravityAndRefill();
+      steps.add(CascadeStep(
+        beforeClearCells: beforeClear,
+        clearedPositions: Set<BoardPosition>.of(matchedPositions),
+        afterDropCells: cells,
+      ));
     }
 
-    return CascadeResult(scoreDelta: totalScore, cascadeCount: cascadeCount);
+    return CascadeResult(
+      scoreDelta: totalScore,
+      cascadeCount: cascadeCount,
+      steps: steps,
+    );
   }
 
   bool ensurePlayable() {
@@ -275,6 +299,10 @@ class GameBoard {
     return List.generate(boardSize, (_) => List<int>.filled(boardSize, 0));
   }
 
+  static List<List<int>> _copyCells(List<List<int>> cells) {
+    return [for (final row in cells) List<int>.of(row)];
+  }
+
   static void _validateCells(List<List<int>> cells) {
     if (cells.length != boardSize || cells.any((row) => row.length != boardSize)) {
       throw ArgumentError('Board must be ${boardSize}x$boardSize.');
@@ -291,8 +319,20 @@ class GameBoard {
 }
 
 class CascadeResult {
-  const CascadeResult({required this.scoreDelta, required this.cascadeCount});
+  const CascadeResult({
+    required this.scoreDelta,
+    required this.cascadeCount,
+    this.steps = const [],
+  });
 
   final int scoreDelta;
   final int cascadeCount;
+  final List<CascadeStep> steps;
 }
+
+const _rejectedMove = MoveResult(
+  accepted: false,
+  scoreDelta: 0,
+  cascadeCount: 0,
+  reshuffled: false,
+);
