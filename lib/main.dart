@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/services.dart';
 
 import 'core/game_core.dart';
@@ -52,6 +53,8 @@ class _WahaHomePageState extends State<WahaHomePage>
   bool _inputLocked = false;
   String? _message;
   List<List<int>>? _animatedCells;
+  CascadeStep? _dropStep;
+  int _animationGeneration = 0;
   Set<BoardPosition> _vanishingPositions = {};
 
   @override
@@ -97,6 +100,8 @@ class _WahaHomePageState extends State<WahaHomePage>
   }
 
   void _startGame() {
+    _animationGeneration++;
+    _dropStep = null;
     setState(() {
       _session ??= GameSession.newGame();
       _isPlaying = true;
@@ -110,6 +115,8 @@ class _WahaHomePageState extends State<WahaHomePage>
   }
 
   void _goHome() {
+    _animationGeneration++;
+    _dropStep = null;
     setState(() {
       _isPlaying = false;
       _message = null;
@@ -126,6 +133,9 @@ class _WahaHomePageState extends State<WahaHomePage>
     if (session == null) {
       return;
     }
+
+    _animationGeneration++;
+    _dropStep = null;
 
     setState(() {
       session.startNextLevel();
@@ -197,14 +207,15 @@ class _WahaHomePageState extends State<WahaHomePage>
     if (session.soundEnabled) {
       unawaited(SystemSound.play(SystemSoundType.click));
     }
-    unawaited(_finishMove(result.steps));
+    unawaited(_finishMove(result.steps, ++_animationGeneration));
     return true;
   }
 
-  Future<void> _finishMove(List<CascadeStep> steps) async {
+  Future<void> _finishMove(List<CascadeStep> steps, int generation) async {
     await Future<void>.delayed(const Duration(milliseconds: 170));
-    await _playCascadeAnimation(steps);
-    if (!mounted) return;
+    if (!mounted || generation != _animationGeneration) return;
+    await _playCascadeAnimation(steps, generation);
+    if (!mounted || generation != _animationGeneration) return;
     setState(() {
       _animatedCells = null;
       _vanishingPositions = {};
@@ -212,25 +223,32 @@ class _WahaHomePageState extends State<WahaHomePage>
     });
   }
 
-  Future<void> _playCascadeAnimation(List<CascadeStep> steps) async {
+  Future<void> _playCascadeAnimation(
+    List<CascadeStep> steps,
+    int generation,
+  ) async {
     for (final step in steps) {
-      if (!mounted) {
+      if (!mounted || generation != _animationGeneration) {
         return;
       }
       setState(() {
+        _dropStep = null;
         _animatedCells = step.beforeClearCells;
         _vanishingPositions = step.clearedPositions;
       });
       await Future<void>.delayed(const Duration(milliseconds: 240));
 
-      if (!mounted) {
+      if (!mounted || generation != _animationGeneration) {
         return;
       }
       setState(() {
+        _dropStep = step;
         _animatedCells = step.afterDropCells;
         _vanishingPositions = {};
       });
-      await Future<void>.delayed(const Duration(milliseconds: 230));
+      await Future<void>.delayed(const Duration(milliseconds: 330));
+      if (!mounted || generation != _animationGeneration) return;
+      setState(() => _dropStep = null);
     }
   }
 
@@ -253,6 +271,7 @@ class _WahaHomePageState extends State<WahaHomePage>
         message: _message,
         inputLocked: _inputLocked,
         displayCells: _animatedCells ?? session.board.cells,
+        dropStep: _dropStep,
         vanishingPositions: _vanishingPositions,
         onHome: _goHome,
         onNextLevel: _nextLevel,
@@ -338,6 +357,7 @@ class GamePage extends StatelessWidget {
     required this.message,
     required this.inputLocked,
     required this.displayCells,
+    required this.dropStep,
     required this.vanishingPositions,
     required this.onHome,
     required this.onNextLevel,
@@ -350,6 +370,7 @@ class GamePage extends StatelessWidget {
   final String? message;
   final bool inputLocked;
   final List<List<int>> displayCells;
+  final CascadeStep? dropStep;
   final Set<BoardPosition> vanishingPositions;
   final VoidCallback onHome;
   final VoidCallback onNextLevel;
@@ -412,6 +433,7 @@ class GamePage extends StatelessWidget {
                       height: boardExtent,
                       child: GameBoardView(
                         cells: displayCells,
+                        dropStep: dropStep,
                         enabled: !session.isLevelComplete && !inputLocked,
                         vanishingPositions: vanishingPositions,
                         onSwipe: onSwipe,
@@ -431,7 +453,7 @@ class GamePage extends StatelessWidget {
                         ),
                       ),
                     ),
-                    if (session.isLevelComplete) ...[
+                    if (session.isLevelComplete && !inputLocked) ...[
                       const SizedBox(height: 18),
                       Text(
                         session.isDemoComplete
@@ -477,6 +499,7 @@ class GameBoardView extends StatefulWidget {
     required this.enabled,
     required this.vanishingPositions,
     required this.onSwipe,
+    this.dropStep,
     super.key,
   });
 
@@ -484,6 +507,7 @@ class GameBoardView extends StatefulWidget {
   final bool enabled;
   final Set<BoardPosition> vanishingPositions;
   final bool Function(BoardPosition position, Direction direction) onSwipe;
+  final CascadeStep? dropStep;
 
   @override
   State<GameBoardView> createState() => _GameBoardViewState();
@@ -491,28 +515,35 @@ class GameBoardView extends StatefulWidget {
 
 class _GameBoardViewState extends State<GameBoardView> {
   static const double _gap = 6;
-  static const double _inset = 8;
+  static const double _inset = 9.5;
   static const _snapDuration = Duration(milliseconds: 160);
 
+  int? _pointer;
+  Offset _pointerOrigin = Offset.zero;
   BoardPosition? _dragFrom;
   BoardPosition? _previewTo;
   Direction? _direction;
-  int? _dragGem;
-  int? _otherGem;
   Offset _drag = Offset.zero;
+  List<List<int>>? _gestureCells;
   bool _settling = false;
+  bool _instantReset = false;
 
   Direction? _directionFor(Offset delta) {
-    if (delta.distance < 3) return null;
+    if (delta.distance < 0.5) return null;
     if (delta.dx.abs() >= delta.dy.abs()) {
       return delta.dx > 0 ? Direction.right : Direction.left;
     }
     return delta.dy > 0 ? Direction.down : Direction.up;
   }
 
-  void _start(DragStartDetails details, double cell, double pitch) {
-    if (!widget.enabled || _settling) return;
-    final local = details.localPosition - const Offset(_inset, _inset);
+  void _down(PointerDownEvent event, double cell, double pitch) {
+    if (!widget.enabled ||
+        _settling ||
+        _pointer != null ||
+        (event.buttons & kPrimaryButton) == 0)
+      return;
+    final local = event.localPosition - const Offset(_inset, _inset);
+    if (local.dx < 0 || local.dy < 0) return;
     final col = (local.dx / pitch).floor();
     final row = (local.dy / pitch).floor();
     final from = BoardPosition(row, col);
@@ -520,95 +551,81 @@ class _GameBoardViewState extends State<GameBoardView> {
       return;
     }
     setState(() {
+      _pointer = event.pointer;
+      _instantReset = false;
+      _pointerOrigin = event.position;
+      _gestureCells = [for (final row in widget.cells) List<int>.of(row)];
       _dragFrom = from;
-      _dragGem = widget.cells[row][col];
-      _otherGem = null;
       _drag = Offset.zero;
       _direction = null;
       _previewTo = null;
     });
   }
 
-  void _update(DragUpdateDetails details, double pitch) {
+  void _move(PointerMoveEvent event, double pitch) {
     final from = _dragFrom;
-    if (from == null || _settling) return;
-    final delta = _drag + details.delta;
+    if (event.pointer != _pointer || from == null || _settling) return;
+    // Always measure from the original press; clamping must not lose motion.
+    final delta = event.position - _pointerOrigin;
     final direction = _directionFor(delta);
     final to = direction == null ? null : from.neighbor(direction);
-    if (to != null && !to.isInside) {
+    final horizontal =
+        direction == Direction.left || direction == Direction.right;
+    final axis = (horizontal ? delta.dx : delta.dy)
+        .clamp(-pitch, pitch)
+        .toDouble();
+    setState(() {
+      _direction = direction;
+      _drag = direction == null || to == null || !to.isInside
+          ? Offset.zero
+          : horizontal
+          ? Offset(axis, 0)
+          : Offset(0, axis);
+      _previewTo = to != null && to.isInside && axis.abs() >= pitch / 2
+          ? to
+          : null;
+    });
+  }
+
+  Future<void> _release(
+    int pointer,
+    double pitch, {
+    bool cancelled = false,
+  }) async {
+    final from = _dragFrom;
+    if (pointer != _pointer || from == null || _settling) return;
+    final to = cancelled ? null : _previewTo;
+    final direction = _direction;
+    if (_drag == Offset.zero && to == null) {
       setState(() {
-        _drag = Offset.zero;
-        _previewTo = null;
+        _pointer = null;
+        _dragFrom = null;
         _direction = null;
-        _otherGem = null;
+        _gestureCells = null;
       });
       return;
     }
-    final axis = direction == Direction.left || direction == Direction.right
-        ? delta.dx.clamp(-pitch, pitch).toDouble()
-        : delta.dy.clamp(-pitch, pitch).toDouble();
-    final drag = direction == null
-        ? Offset.zero
-        : direction == Direction.left || direction == Direction.right
-        ? Offset(axis, 0)
-        : Offset(0, axis);
+    final accepted =
+        to != null &&
+        direction != null &&
+        widget.enabled &&
+        widget.onSwipe(from, direction);
     setState(() {
-      _drag = drag;
-      _direction = direction;
-      _otherGem = to == null ? null : widget.cells[to.row][to.col];
-      _previewTo = direction != null && axis.abs() >= pitch / 2 ? to : null;
-    });
-  }
-
-  Future<void> _end(double pitch) async {
-    final from = _dragFrom;
-    if (from == null || _settling) return;
-    final to = _previewTo;
-    final direction = _direction;
-    setState(() {
+      _pointer = null;
       _settling = true;
-      _drag = to == null ? Offset.zero : _offset(direction!, pitch);
+      _previewTo = accepted ? to : null;
+      _drag = accepted ? _offset(direction!, pitch) : Offset.zero;
     });
     await Future<void>.delayed(_snapDuration);
     if (!mounted) return;
-    if (to != null && direction != null && widget.enabled) {
-      final accepted = widget.onSwipe(from, direction);
-      if (!accepted) {
-        setState(() {
-          _drag = Offset.zero;
-          _previewTo = null;
-        });
-        await Future<void>.delayed(_snapDuration);
-      }
-    }
-    if (!mounted) return;
     setState(() {
+      _instantReset = accepted;
+      _gestureCells = null;
       _dragFrom = null;
       _previewTo = null;
       _direction = null;
-      _dragGem = null;
-      _otherGem = null;
       _drag = Offset.zero;
       _settling = false;
-    });
-  }
-
-  void _cancel() {
-    if (_dragFrom == null || _settling) return;
-    setState(() {
-      _settling = true;
-      _drag = Offset.zero;
-      _previewTo = null;
-    });
-    Future<void>.delayed(_snapDuration, () {
-      if (!mounted) return;
-      setState(() {
-        _dragFrom = null;
-        _direction = null;
-        _dragGem = null;
-        _otherGem = null;
-        _settling = false;
-      });
     });
   }
 
@@ -619,76 +636,96 @@ class _GameBoardViewState extends State<GameBoardView> {
     Direction.down => Offset(0, pitch),
   };
 
+  Widget _cell(BoardPosition position, double cell, double pitch) {
+    final selected = position == _dragFrom;
+    var displacement = Offset.zero;
+    if (selected) {
+      displacement = _drag;
+    } else if (position == _previewTo && _direction != null) {
+      displacement = -_offset(_direction!, pitch);
+    }
+    return AnimatedPositioned(
+      key: ValueKey(position),
+      duration: _instantReset || selected && !_settling
+          ? Duration.zero
+          : _snapDuration,
+      curve: Curves.easeOutCubic,
+      left: position.col * pitch + displacement.dx,
+      top: position.row * pitch + displacement.dy,
+      width: cell,
+      height: cell,
+      child: RepaintBoundary(
+        child: GemTile(
+          gem: (_gestureCells ?? widget.cells)[position.row][position.col],
+          disappearing: widget.vanishingPositions.contains(position),
+        ),
+      ),
+    );
+  }
+
+  Widget _fall(GemFall fall, double cell, double pitch) {
+    return TweenAnimationBuilder<double>(
+      key: ValueKey(fall.to),
+      tween: Tween(begin: 0, end: 1),
+      duration: const Duration(milliseconds: 300),
+      curve: Curves.easeInQuad,
+      builder: (context, progress, child) => Positioned(
+        left: fall.to.col * pitch,
+        top: (fall.from.row + (fall.to.row - fall.from.row) * progress) * pitch,
+        width: cell,
+        height: cell,
+        child: child!,
+      ),
+      child: RepaintBoundary(child: GemTile(gem: fall.gem)),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return LayoutBuilder(
       builder: (context, constraints) {
-        final extent = constraints.maxWidth - 2 * _inset - 2;
+        final extent = constraints.maxWidth - 2 * _inset;
         final cell = (extent - (boardSize - 1) * _gap) / boardSize;
         final pitch = cell + _gap;
-        final from = _dragFrom;
-        final to = _previewTo;
-        final direction = _direction;
-        final other = from == null || direction == null
-            ? null
-            : from.neighbor(direction);
-        return GestureDetector(
-          behavior: HitTestBehavior.opaque,
-          onPanStart: widget.enabled ? (d) => _start(d, cell, pitch) : null,
-          onPanUpdate: widget.enabled ? (d) => _update(d, pitch) : null,
-          onPanEnd: widget.enabled ? (_) => _end(pitch) : null,
-          onPanCancel: widget.enabled ? _cancel : null,
-          child: Container(
-            padding: const EdgeInsets.all(_inset),
-            decoration: BoxDecoration(
-              color: const Color(0xFF1B1E26),
-              border: Border.all(color: const Color(0xFFBFA76A), width: 1.5),
-              borderRadius: BorderRadius.circular(8),
-            ),
-            child: Stack(
-              clipBehavior: Clip.none,
-              children: [
-                for (var row = 0; row < boardSize; row++)
-                  for (var col = 0; col < boardSize; col++)
-                    if (BoardPosition(row, col) != from &&
-                        BoardPosition(row, col) != other)
-                      Positioned(
-                        left: col * pitch,
-                        top: row * pitch,
-                        width: cell,
-                        height: cell,
-                        child: GemTile(
-                          gem: widget.cells[row][col],
-                          disappearing: widget.vanishingPositions.contains(
-                            BoardPosition(row, col),
-                          ),
-                        ),
-                      ),
-                if (other != null && other.isInside)
-                  AnimatedPositioned(
-                    duration: _snapDuration,
-                    curve: Curves.easeOutCubic,
-                    left:
-                        other.col * pitch -
-                        (to == other ? _offset(direction!, pitch).dx : 0),
-                    top:
-                        other.row * pitch -
-                        (to == other ? _offset(direction!, pitch).dy : 0),
-                    width: cell,
-                    height: cell,
-                    child: GemTile(gem: _otherGem!),
-                  ),
-                if (from != null)
-                  AnimatedPositioned(
-                    duration: _settling ? _snapDuration : Duration.zero,
-                    curve: Curves.easeOutCubic,
-                    left: from.col * pitch + _drag.dx,
-                    top: from.row * pitch + _drag.dy,
-                    width: cell,
-                    height: cell,
-                    child: GemTile(gem: _dragGem!),
-                  ),
-              ],
+        final drop = widget.dropStep;
+        return RawGestureDetector(
+          gestures: {
+            EagerGestureRecognizer:
+                GestureRecognizerFactoryWithHandlers<EagerGestureRecognizer>(
+                  () => EagerGestureRecognizer(),
+                  (_) {},
+                ),
+          },
+          child: Listener(
+            behavior: HitTestBehavior.opaque,
+            onPointerDown: (event) => _down(event, cell, pitch),
+            onPointerMove: (event) => _move(event, pitch),
+            onPointerUp: (event) => _release(event.pointer, pitch),
+            onPointerCancel: (event) =>
+                _release(event.pointer, pitch, cancelled: true),
+            child: Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: const Color(0xFF1B1E26),
+                border: Border.all(color: const Color(0xFFBFA76A), width: 1.5),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: ClipRect(
+                child: Stack(
+                  children: drop != null
+                      ? [
+                          for (final fall in drop.falls)
+                            _fall(fall, cell, pitch),
+                        ]
+                      : [
+                          for (var row = 0; row < boardSize; row++)
+                            for (var col = 0; col < boardSize; col++)
+                              if (BoardPosition(row, col) != _dragFrom)
+                                _cell(BoardPosition(row, col), cell, pitch),
+                          if (_dragFrom != null) _cell(_dragFrom!, cell, pitch),
+                        ],
+                ),
+              ),
             ),
           ),
         );
@@ -713,35 +750,31 @@ class GemTile extends StatelessWidget {
       child: AnimatedOpacity(
         duration: const Duration(milliseconds: 180),
         opacity: disappearing ? 0 : 1,
-        child: AnimatedSwitcher(
-          duration: const Duration(milliseconds: 220),
-          child: Container(
-            key: ValueKey(gem),
-            alignment: Alignment.center,
-            decoration: BoxDecoration(
-              color: style.color,
-              borderRadius: BorderRadius.circular(7),
-              border: Border.all(color: Colors.white.withOpacity(0.24)),
-              boxShadow: [
-                BoxShadow(
-                  color: style.color.withOpacity(0.28),
-                  blurRadius: 10,
-                  offset: const Offset(0, 3),
-                ),
-              ],
-            ),
-            child: FittedBox(
-              fit: BoxFit.scaleDown,
-              child: Padding(
-                padding: const EdgeInsets.all(6),
-                child: Text(
-                  style.symbol,
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 24,
-                    fontWeight: FontWeight.w800,
-                    letterSpacing: 0,
-                  ),
+        child: Container(
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            color: style.color,
+            borderRadius: BorderRadius.circular(7),
+            border: Border.all(color: Colors.white.withOpacity(0.24)),
+            boxShadow: [
+              BoxShadow(
+                color: style.color.withOpacity(0.28),
+                blurRadius: 10,
+                offset: const Offset(0, 3),
+              ),
+            ],
+          ),
+          child: FittedBox(
+            fit: BoxFit.scaleDown,
+            child: Padding(
+              padding: const EdgeInsets.all(6),
+              child: Text(
+                style.symbol,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 24,
+                  fontWeight: FontWeight.w800,
+                  letterSpacing: 0,
                 ),
               ),
             ),
