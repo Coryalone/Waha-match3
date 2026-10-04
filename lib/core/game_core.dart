@@ -21,7 +21,8 @@ class BoardPosition {
     };
   }
 
-  bool get isInside => row >= 0 && row < boardSize && col >= 0 && col < boardSize;
+  bool get isInside =>
+      row >= 0 && row < boardSize && col >= 0 && col < boardSize;
 
   @override
   bool operator ==(Object other) =>
@@ -48,6 +49,43 @@ class CascadeStep {
   final List<List<int>> beforeClearCells;
   final Set<BoardPosition> clearedPositions;
   final List<List<int>> afterDropCells;
+
+  List<GemFall> get falls {
+    final result = <GemFall>[];
+    for (var col = 0; col < boardSize; col++) {
+      var destination = boardSize - 1;
+      for (var row = boardSize - 1; row >= 0; row--) {
+        final source = BoardPosition(row, col);
+        if (clearedPositions.contains(source)) continue;
+        result.add(
+          GemFall(
+            gem: beforeClearCells[row][col],
+            from: source,
+            to: BoardPosition(destination--, col),
+          ),
+        );
+      }
+      final newCount = destination + 1;
+      for (var row = 0; row < newCount; row++) {
+        result.add(
+          GemFall(
+            gem: afterDropCells[row][col],
+            from: BoardPosition(row - newCount, col),
+            to: BoardPosition(row, col),
+          ),
+        );
+      }
+    }
+    return result;
+  }
+}
+
+class GemFall {
+  const GemFall({required this.gem, required this.from, required this.to});
+
+  final int gem;
+  final BoardPosition from;
+  final BoardPosition to;
 }
 
 class MoveResult {
@@ -76,7 +114,10 @@ class GameBoard {
       final board = GameBoard._(_emptyCells(), rng);
       for (var row = 0; row < boardSize; row++) {
         for (var col = 0; col < boardSize; col++) {
-          board._cells[row][col] = board._randomGemAvoidingInitialMatch(row, col);
+          board._cells[row][col] = board._randomGemAvoidingInitialMatch(
+            row,
+            col,
+          );
         }
       }
 
@@ -90,10 +131,9 @@ class GameBoard {
 
   factory GameBoard.fromCells(List<List<int>> cells, {Random? random}) {
     _validateCells(cells);
-    return GameBoard._(
-      [for (final row in cells) List<int>.of(row)],
-      random ?? Random(),
-    );
+    return GameBoard._([
+      for (final row in cells) List<int>.of(row),
+    ], random ?? Random());
   }
 
   final List<List<int>> _cells;
@@ -173,11 +213,13 @@ class GameBoard {
       cascadeCount++;
       _clear(matchedPositions);
       _applyGravityAndRefill();
-      steps.add(CascadeStep(
-        beforeClearCells: beforeClear,
-        clearedPositions: Set<BoardPosition>.of(matchedPositions),
-        afterDropCells: cells,
-      ));
+      steps.add(
+        CascadeStep(
+          beforeClearCells: beforeClear,
+          clearedPositions: Set<BoardPosition>.of(matchedPositions),
+          afterDropCells: cells,
+        ),
+      );
     }
 
     return CascadeResult(
@@ -211,9 +253,12 @@ class GameBoard {
           continue;
         }
         if (col - start >= 3) {
-          groups.add(MatchGroup({
-            for (var matchCol = start; matchCol < col; matchCol++) BoardPosition(row, matchCol),
-          }));
+          groups.add(
+            MatchGroup({
+              for (var matchCol = start; matchCol < col; matchCol++)
+                BoardPosition(row, matchCol),
+            }),
+          );
         }
         start = col;
       }
@@ -226,9 +271,12 @@ class GameBoard {
           continue;
         }
         if (row - start >= 3) {
-          groups.add(MatchGroup({
-            for (var matchRow = start; matchRow < row; matchRow++) BoardPosition(matchRow, col),
-          }));
+          groups.add(
+            MatchGroup({
+              for (var matchRow = start; matchRow < row; matchRow++)
+                BoardPosition(matchRow, col),
+            }),
+          );
         }
         start = row;
       }
@@ -238,19 +286,20 @@ class GameBoard {
   }
 
   Set<BoardPosition> _uniqueMatchedPositions() {
-    return {
-      for (final group in findMatches()) ...group.positions,
-    };
+    return {for (final group in findMatches()) ...group.positions};
   }
 
   int _randomGemAvoidingInitialMatch(int row, int col) {
-    final candidates = List<int>.generate(gemTypeCount, (index) => index)..shuffle(_random);
+    final candidates = List<int>.generate(gemTypeCount, (index) => index)
+      ..shuffle(_random);
 
     for (final candidate in candidates) {
-      final createsHorizontal = col >= 2 &&
+      final createsHorizontal =
+          col >= 2 &&
           _cells[row][col - 1] == candidate &&
           _cells[row][col - 2] == candidate;
-      final createsVertical = row >= 2 &&
+      final createsVertical =
+          row >= 2 &&
           _cells[row - 1][col] == candidate &&
           _cells[row - 2][col] == candidate;
       if (!createsHorizontal && !createsVertical) {
@@ -304,14 +353,17 @@ class GameBoard {
   }
 
   static void _validateCells(List<List<int>> cells) {
-    if (cells.length != boardSize || cells.any((row) => row.length != boardSize)) {
+    if (cells.length != boardSize ||
+        cells.any((row) => row.length != boardSize)) {
       throw ArgumentError('Board must be ${boardSize}x$boardSize.');
     }
 
     for (final row in cells) {
       for (final gem in row) {
         if (gem < 0 || gem >= gemTypeCount) {
-          throw ArgumentError('Gem values must be between 0 and ${gemTypeCount - 1}.');
+          throw ArgumentError(
+            'Gem values must be between 0 and ${gemTypeCount - 1}.',
+          );
         }
       }
     }
@@ -336,3 +388,4 @@ const _rejectedMove = MoveResult(
   cascadeCount: 0,
   reshuffled: false,
 );
+
