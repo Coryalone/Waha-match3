@@ -59,8 +59,6 @@ class SessionStore {
       );
     } on TypeError {
       throw const FormatException('Invalid save data');
-    } on CastError {
-      throw const FormatException('Invalid save data');
     }
   }
 }
